@@ -5,29 +5,54 @@ NestJS API, which serves the REST API under `/api` and the built React SPA for
 everything else. Postgres is a separate managed database. Migrations run
 automatically when the container starts.
 
-## Deploy to Render (Blueprint)
+## Option A — No credit card (recommended): Neon DB + Render free web service
 
-Prerequisites: a [Render](https://render.com) account, this repo on GitHub/GitLab,
-and a free **Gemini API key** (https://aistudio.google.com/app/apikey).
+Render's **Blueprint** asks for a card (it can provision paid infra). You can avoid that
+entirely: use a free **Neon** Postgres (no card, doesn't expire) and create a Render free
+**web service** by hand (no card). Same Docker image, same result.
 
-1. **Push to a Git remote** (Render deploys from a connected repo).
-2. In Render: **New → Blueprint**, pick this repo. Render reads [`render.yaml`](render.yaml)
-   and proposes a web service (`tennis-app`) + a Postgres database (`tennis-db`).
-3. **Apply**. Render provisions Postgres, wires `DATABASE_URL`, and auto-generates `JWT_SECRET`.
-4. Set the one secret it can't generate: on the `tennis-app` service → **Environment** →
-   set **`GEMINI_API_KEY`** to your key. (Save triggers a redeploy.)
-5. First deploy builds the image, runs `prisma migrate deploy`, and starts the server.
-   When the **health check** at `/api/health` passes, your app is live at
-   `https://tennis-app.onrender.com` (HTTPS provided automatically).
+Prerequisites: free accounts on [Neon](https://neon.tech) and [Render](https://render.com),
+this repo on GitHub, and a free **Gemini API key** (https://aistudio.google.com/app/apikey).
 
-That's it — register an account in the app and you're in.
+1. **Create the database (Neon):** New Project → copy the **connection string** (the pooled
+   one is fine). It looks like `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`.
+2. **Push this repo to GitHub.**
+3. **Create the web service (Render):** New → **Web Service** (not Blueprint) → connect the repo.
+   - Runtime/Environment: **Docker** (Render auto-detects the `Dockerfile`).
+   - Instance type: **Free**.
+   - Health check path: `/api/health`.
+4. **Set environment variables** on the service (Environment tab):
+   - `DATABASE_URL` = the Neon string from step 1
+   - `JWT_SECRET` = any long random string (e.g. `openssl rand -hex 32`)
+   - `GEMINI_API_KEY` = your Gemini key
+   - `GEMINI_MODEL` = `gemini-2.5-flash`
+   - `NODE_ENV` = `production`
+   - (Render injects `PORT` automatically.)
+5. **Create / deploy.** The container builds, runs `prisma migrate deploy` against Neon, and
+   starts. When `/api/health` passes, the app is live at `https://<name>.onrender.com` (HTTPS).
+
+`render.yaml` is **not used** in this path — ignore it. Register an account in the app and you're in.
+
+> Free Render web services **sleep after ~15 min idle** (≈1 min cold start on the next visit).
+> Fine for a demo; upgrade the instance to remove it.
+
+## Option B — Render Blueprint (one-click, but needs a card on file)
+
+If you don't mind adding a card (you still won't be charged on free tiers):
+
+1. **Push to a Git remote.**
+2. Render: **New → Blueprint**, pick this repo. It reads [`render.yaml`](render.yaml) and proposes a
+   web service + Postgres.
+3. **Apply** — Render provisions Postgres, wires `DATABASE_URL`, auto-generates `JWT_SECRET`.
+4. Set **`GEMINI_API_KEY`** on the service (Environment).
+5. When `/api/health` passes, it's live over HTTPS.
 
 ### Environment variables
 
 | Var | Source | Notes |
 |---|---|---|
-| `DATABASE_URL` | from `tennis-db` | wired by the blueprint |
-| `JWT_SECRET` | auto-generated | strong, per-environment |
+| `DATABASE_URL` | Neon string (Option A) / `tennis-db` (Option B) | Postgres connection |
+| `JWT_SECRET` | you set it (A) / auto-generated (B) | any long random string |
 | `GEMINI_API_KEY` | **you set it** | required for the AI Coach |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | override if desired |
 | `PORT` | injected by Render | the server binds it on `0.0.0.0` |

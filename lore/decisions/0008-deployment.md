@@ -39,3 +39,7 @@ Ship one Docker image: the NestJS API serves `/api` **and** the static React bui
   Claude-swap as the fallback.
 - HTTPS (required for the PWA service worker and camera capture) is provided by Render.
 - The same image runs on any container host; only `render.yaml` is Render-specific.
+- **No-card path:** Render's Blueprint requires a card on file. To deploy free without one,
+  `DEPLOY.md` documents a manual path — a free **Neon** Postgres (no card, no 30-day expiry)
+  + a Render free **Web Service** created by hand (no Blueprint). The Dockerfile is unchanged;
+  `render.yaml` is simply unused in that path.
