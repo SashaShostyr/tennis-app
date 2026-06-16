@@ -1,0 +1,131 @@
+// Tennis tracker data model. See lore/decisions/0005-data-model.md for rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String // bcrypt hash
+  name      String
+  createdAt DateTime @default(now())
+
+  contacts Contact[]
+  sessions Session[]
+  analyses Analysis[]
+}
+
+/// A person the user plays with (free-text address book entry for the MVP).
+model Contact {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  notes     String?
+  createdAt DateTime @default(now())
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  participants SessionParticipant[]
+
+  @@index([userId])
+}
+
+/// One tennis activity.
+model Session {
+  id           String      @id @default(cuid())
+  userId       String
+  date         DateTime
+  durationMin  Int
+  location     String?
+  surface      Surface
+  indoor       Boolean     @default(false)
+  type         SessionType
+  feelRating   Int? // 1-5
+  energyRating Int? // 1-5
+  funRating    Int? // 1-5
+  notes        String?
+  createdAt    DateTime    @default(now())
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  participants SessionParticipant[]
+  analyses     Analysis[]
+
+  @@index([userId, date])
+}
+
+/// An AI coaching analysis of a single shot. Pose/metrics are computed in the
+/// browser; we persist the feedback + metrics (not the keyframes — too large).
+model Analysis {
+  id                String      @id @default(cuid())
+  userId            String
+  sessionId         String?
+  shotType          ShotType
+  handedness        Handedness
+  twoHandedBackhand Boolean     @default(false)
+  overallScore      Int
+  summary           String
+  strengths         String[]
+  improvements      Json // Improvement[]
+  metrics           Json // Metric[]
+  createdAt         DateTime    @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([sessionId])
+}
+
+/// Join between a Session and a Contact, with the role they played.
+model SessionParticipant {
+  id        String          @id @default(cuid())
+  sessionId String
+  contactId String
+  role      ParticipantRole
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, contactId])
+  @@index([contactId])
+}
+
+enum Surface {
+  HARD
+  CLAY
+  GRASS
+  CARPET
+}
+
+enum SessionType {
+  MATCH
+  PRACTICE
+  DRILLS
+  LESSON
+  WALL
+  CARDIO
+}
+
+enum ParticipantRole {
+  PARTNER
+  OPPONENT
+}
+
+// Lowercase values intentionally match the client wire format + pose/metrics
+// logic (e.g. shotType === "serve"), so no mapping is needed.
+enum ShotType {
+  forehand
+  backhand
+  serve
+  volley
+}
+
+enum Handedness {
+  right
+  left
+}

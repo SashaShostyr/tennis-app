@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* AI Coach shared chrome (ported from the standalone coach's Tailwind v4 styles). */
+@layer components {
+  .card {
+    @apply mt-4 rounded-2xl border border-line bg-white p-4;
+  }
+  .btn-primary {
+    @apply w-full rounded-xl bg-brand-accent py-3.5 font-semibold text-white transition disabled:cursor-default disabled:opacity-50;
+  }
+  .seg {
+    @apply flex-1 basis-[calc(50%-0.5rem)] cursor-pointer rounded-[10px] border border-line bg-white p-2.5 text-[0.95rem] transition disabled:cursor-default disabled:opacity-50;
+  }
+  .seg-active {
+    @apply border-brand bg-brand text-white;
+  }
+}

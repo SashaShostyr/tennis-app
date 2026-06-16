@@ -1,0 +1,20 @@
+{
+  "name": "tennis-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tennis activity tracker — monorepo (NestJS API + React/Vite PWA)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "dev:api": "npm run start:dev --workspace apps/api",
+    "dev:web": "npm run dev --workspace apps/web",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

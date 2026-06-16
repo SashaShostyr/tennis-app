@@ -1,0 +1,33 @@
+# Render Blueprint — single same-origin deploy.
+# The web service builds from the Dockerfile, serves /api and the SPA, and runs
+# `prisma migrate deploy` on start. Postgres is managed by Render.
+# Docs: https://render.com/docs/blueprint-spec
+
+databases:
+  - name: tennis-db
+    databaseName: tennis
+    user: tennis
+    plan: free # free Postgres expires after ~30 days; upgrade for anything real
+
+services:
+  - type: web
+    name: tennis-app
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    region: oregon # a Gemini-supported region (US); change with care — see DEPLOY.md
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tennis-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true # Render generates a strong secret
+      - key: GEMINI_API_KEY
+        sync: false # set in the dashboard; never committed
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: NODE_ENV
+        value: production

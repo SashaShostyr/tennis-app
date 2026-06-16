@@ -1,0 +1,24 @@
+# Keep the build context small and avoid leaking local state into the image.
+node_modules
+**/node_modules
+**/dist
+**/dev-dist
+.git
+.gitignore
+
+# Local env / secrets — production secrets come from the host (Render).
+.env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local tooling / docs not needed in the image
+.claude
+lore
+*.md
+!README.md
+
+# Logs / OS cruft
+*.log
+.DS_Store
+coverage
