@@ -17,7 +17,10 @@ export function Uploader({ disabled, onSelect }: Props) {
     setError(null);
     if (!file) return;
 
-    if (!file.type.startsWith('video/')) {
+    // Some gallery/file pickers report an empty MIME type for a valid video; only
+    // reject when a type is present and clearly not a video. readDuration below is
+    // the real "is this a playable clip" gate.
+    if (file.type && !file.type.startsWith('video/')) {
       setError('Please choose a video file.');
       return;
     }
@@ -26,8 +29,15 @@ export function Uploader({ disabled, onSelect }: Props) {
       return;
     }
 
+    // Enforce the one-shot length limit. If the browser can't read the duration
+    // (e.g. an HEVC/MKV clip from the gallery it can't decode), reject rather than
+    // accept — otherwise an over-long, undecodable clip would slip past the limit.
     const duration = await readDuration(file).catch(() => null);
-    if (duration !== null && duration > MAX_SECONDS) {
+    if (duration === null || !Number.isFinite(duration)) {
+      setError("Couldn't read this video. Record a fresh clip, or use a standard MP4/MOV.");
+      return;
+    }
+    if (duration > MAX_SECONDS) {
       setError(`Clip is ${Math.round(duration)}s — please trim it to ${MAX_SECONDS}s or less (one shot).`);
       return;
     }
@@ -44,11 +54,13 @@ export function Uploader({ disabled, onSelect }: Props) {
         device — only a few frames are sent for coaching.
       </p>
 
+      {/* No `capture` attribute: on mobile that would force the camera and hide the
+          gallery. Without it the OS picker offers both — record a new clip or choose
+          an existing video. */}
       <input
         ref={inputRef}
         type="file"
         accept="video/*"
-        capture="environment"
         hidden
         disabled={disabled}
         onChange={(e) => handleFile(e.target.files?.[0])}
