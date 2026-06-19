@@ -1,6 +1,7 @@
 import {
   HttpException,
   Injectable,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -33,6 +34,7 @@ const responseSchema = {
 
 @Injectable()
 export class GeminiService {
+  private readonly logger = new Logger(GeminiService.name);
   private client: GoogleGenAI | null = null;
 
   constructor(private readonly config: ConfigService) {}
@@ -65,13 +67,34 @@ export class GeminiService {
       })
       .join('\n');
 
+    const frameCount = Math.min(req.keyframes.length, 6);
+    // The contact frame is not necessarily centered — state its position explicitly.
+    const contactPos =
+      typeof req.contactKeyframe === 'number'
+        ? Math.min(Math.max(req.contactKeyframe, 0), frameCount - 1)
+        : null;
+    const contactLine =
+      contactPos != null
+        ? `Frame ${contactPos + 1} of ${frameCount} is the estimated point of contact; frames before it are the preparation/backswing and frames after it are the follow-through.`
+        : `The frames run from preparation through contact to follow-through.`;
+    const ballLine = req.ballDetected
+      ? `A tennis ball was detected near the racket hand in the contact frame, so the contact moment is well localized.`
+      : `The ball could not be confirmed in frame, so the exact contact instant is approximate — judge it from body position and racket path.`;
+
     return [
       `You are an experienced, encouraging tennis coach analyzing a single ${shot} from a ${hand} player.`,
       ``,
-      `You are given (a) objective metrics estimated from in-browser pose detection on a few frames, and`,
-      `(b) a few key still frames from the clip. The metrics come from a single uncalibrated phone camera,`,
-      `so treat them as approximate signals, not exact measurements. Use the frames to sanity-check and`,
-      `add detail (grip, stance, racket position, timing) the numbers can't capture.`,
+      `You are given (a) objective metrics estimated from in-browser pose detection, and`,
+      `(b) ${frameCount} still frames from the clip in CHRONOLOGICAL ORDER, spanning the stroke.`,
+      contactLine,
+      `Read the frames as a sequence: assess the kinetic chain and timing across the swing (preparation,`,
+      `load, contact, follow-through), not just a single pose.`,
+      ``,
+      ballLine,
+      ``,
+      `The metrics come from a single uncalibrated phone camera, so treat them as approximate signals,`,
+      `not exact measurements. Use the frames to sanity-check the numbers and to add detail`,
+      `(grip, stance, racket face, contact point, timing) that the numbers can't capture.`,
       ``,
       `Measured metrics:`,
       metricLines || '- (none could be measured)',
@@ -88,7 +111,7 @@ export class GeminiService {
     const model = this.config.get<string>('GEMINI_MODEL') || 'gemini-2.5-flash';
     const prompt = this.buildPrompt(req);
 
-    const imageParts = req.keyframes.slice(0, 3).map((b64) => ({
+    const imageParts = req.keyframes.slice(0, 6).map((b64) => ({
       inlineData: { mimeType: 'image/jpeg', data: b64 },
     }));
 
@@ -121,6 +144,8 @@ export class GeminiService {
   /** Map raw Gemini SDK errors to clean, user-facing HTTP exceptions. */
   private toFriendlyError(err: unknown): HttpException {
     const message = err instanceof Error ? err.message : String(err);
+    // Surface the real cause in the server logs — the user-facing text is intentionally vague.
+    this.logger.error(`Gemini call failed: ${message}`);
     if (/quota|rate|429|RESOURCE_EXHAUSTED/i.test(message)) {
       return new ServiceUnavailableException(
         'Gemini free-tier limit hit. Wait a bit and try again.',
@@ -130,6 +155,17 @@ export class GeminiService {
       return new ServiceUnavailableException(
         'The coaching service (Gemini) is not available from this region. ' +
           'Try from a supported location, or switch the coaching provider.',
+      );
+    }
+    if (/API[_ ]?key|API_KEY_INVALID|permission|PERMISSION_DENIED|401|403/i.test(message)) {
+      return new ServiceUnavailableException(
+        'Gemini rejected the API key (invalid, restricted, or lacking access to the model). ' +
+          'Check GEMINI_API_KEY and that the key may use the configured GEMINI_MODEL.',
+      );
+    }
+    if (/not found|NOT_FOUND|404|model/i.test(message)) {
+      return new ServiceUnavailableException(
+        'The configured Gemini model was not found for this key. Check GEMINI_MODEL.',
       );
     }
     return new ServiceUnavailableException('Coaching service failed. Please try again.');

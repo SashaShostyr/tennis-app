@@ -29,6 +29,8 @@ export class CoachService {
       twoHandedBackhand: dto.twoHandedBackhand,
       metrics: dto.metrics,
       keyframes: dto.keyframes,
+      ballDetected: dto.ballDetected,
+      contactKeyframe: dto.contactKeyframe,
     });
 
     const saved = await this.prisma.analysis.create({

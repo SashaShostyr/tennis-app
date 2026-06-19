@@ -164,8 +164,12 @@ export interface AnalyzeRequest {
   /** Two-handed backhand (only meaningful for backhand). */
   twoHandedBackhand?: boolean;
   metrics: Metric[];
-  /** ~3 base64-encoded JPEG keyframes (no data: prefix). */
+  /** Up to 6 base64-encoded JPEG keyframes (no data: prefix), in chronological order. */
   keyframes: string[];
+  /** A ball was detected near the racket hand at the estimated contact frame. */
+  ballDetected?: boolean;
+  /** 0-based position of the estimated contact frame within `keyframes`. */
+  contactKeyframe?: number;
   /** Optional session to attach this analysis to. */
   sessionId?: string;
 }

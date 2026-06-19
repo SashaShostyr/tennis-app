@@ -54,12 +54,20 @@ export class AnalyzeDto {
   @Type(() => MetricDto)
   metrics!: MetricDto[];
 
-  // ~3 base64 JPEG keyframes (no data: prefix).
+  // Up to 6 base64 JPEG keyframes (no data: prefix), in chronological order.
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(6)
   @IsString({ each: true })
   keyframes!: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  ballDetected?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  contactKeyframe?: number;
 
   @IsOptional()
   @IsString()

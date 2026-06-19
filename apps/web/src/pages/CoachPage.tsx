@@ -5,9 +5,16 @@ import { SHOT_TYPE_LABELS } from '@tennis/shared';
 import { ShotForm } from '../components/coach/ShotForm';
 import { Uploader } from '../components/coach/Uploader';
 import { Feedback } from '../components/coach/Feedback';
-import { extractFrames, canvasToBase64Jpeg } from '../lib/coach/frames';
+import { openVideo, evenTimes, canvasToBase64Jpeg } from '../lib/coach/frames';
 import { detectPoses, preloadPose } from '../lib/coach/pose';
-import { computeMetrics, detectedFrameCount } from '../lib/coach/metrics';
+import { detectBalls, preloadBall } from '../lib/coach/ball';
+import {
+  computeMetrics,
+  detectedFrameCount,
+  findMotionPeakTime,
+  buildOverlays,
+  type FrameOverlay,
+} from '../lib/coach/metrics';
 import { useAnalyzeShot, useAnalyses, useSessions } from '../hooks/queries';
 import { extractError } from '../lib/errors';
 import { formatDate } from '../lib/format';
@@ -37,14 +44,20 @@ export function CoachPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
+  const [coachError, setCoachError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [sentFrames, setSentFrames] = useState<string[]>([]);
   const [contactPos, setContactPos] = useState(-1);
+  const [overlays, setOverlays] = useState<FrameOverlay[]>([]);
+  const [frameSize, setFrameSize] = useState<{ w: number; h: number } | null>(null);
 
-  // Warm up the pose model in the background so analysis feels fast.
+  // Warm up the pose + ball models in the background so analysis feels fast.
   useEffect(() => {
     preloadPose().catch(() => {
       /* will retry on first analyze */
+    });
+    preloadBall().catch(() => {
+      /* ball detection is optional */
     });
   }, []);
 
@@ -54,50 +67,107 @@ export function CoachPage() {
     if (!file) return;
     setError(null);
     setResult(null);
+    setCoachError(null);
+
+    const video = await openVideo(file).catch((err) => {
+      setError(extractError(err, 'Could not read this video file.'));
+      setPhase('error');
+      return null;
+    });
+    if (!video) return;
 
     try {
+      const { duration, width, height } = video;
+
+      // Pass 1 (coarse): scan the whole clip to find where the swing happens.
       setPhase('extracting');
-      const { frames } = await extractFrames(file, 14);
+      const coarseFrames = await video.extractAt(evenTimes(12, duration * 0.05, duration * 0.95));
 
       setPhase('detecting');
-      const poses = await detectPoses(frames);
-      if (detectedFrameCount(poses) < 3) {
+      const coarsePoses = await detectPoses(coarseFrames);
+
+      // Window the dense pass tightly around the peak of wrist motion (the swing).
+      // Ball detection is reserved for the dense pass, where it pins down contact.
+      const peak = findMotionPeakTime(coarsePoses, handedness);
+      let start = duration * 0.05;
+      let end = duration * 0.95;
+      if (peak != null) {
+        start = Math.max(duration * 0.02, peak - 0.6);
+        end = Math.min(duration * 0.98, peak + 0.6);
+      }
+      // Even if the ball helps later, keep a sane minimum span to sample across.
+      if (end - start < 0.4) {
+        const mid = (start + end) / 2;
+        start = Math.max(0, mid - 0.4);
+        end = Math.min(duration, mid + 0.4);
+      }
+
+      // Pass 2 (dense): re-sample inside the window for precise contact + metrics.
+      setPhase('extracting');
+      const denseFrames = await video.extractAt(evenTimes(16, start, end));
+
+      setPhase('detecting');
+      const densePoses = await detectPoses(denseFrames);
+      const denseBalls = await detectBalls(denseFrames);
+      if (detectedFrameCount(densePoses) < 3) {
         throw new Error(
           "Couldn't reliably detect a player in this clip. Film from the side with your whole body in frame, in good light.",
         );
       }
 
-      const { metrics: computed, contactIndex } = computeMetrics(
-        poses,
-        shotType,
-        handedness,
-        twoHandedBackhand,
-      );
+      const {
+        metrics: computed,
+        contactIndex,
+        ballDetected,
+      } = computeMetrics(densePoses, shotType, handedness, twoHandedBackhand, denseBalls);
       setMetrics(computed);
 
-      // Send 3 keyframes around the estimated contact moment.
-      const idxs = [contactIndex - 2, contactIndex, contactIndex + 2]
-        .map((i) => Math.max(0, Math.min(frames.length - 1, i)))
+      // Send keyframes spanning the stroke: prep → backswing → contact → follow-through → finish.
+      const idxs = [-4, -2, 0, 2, 4]
+        .map((o) => contactIndex + o)
+        .map((i) => Math.max(0, Math.min(denseFrames.length - 1, i)))
         .filter((v, i, arr) => arr.indexOf(v) === i);
-      const keyframes = idxs.map((i) => canvasToBase64Jpeg(frames[i].canvas));
+      const keyframes = idxs.map((i) => canvasToBase64Jpeg(denseFrames[i].canvas));
+      const contactPos = idxs.indexOf(contactIndex);
       setSentFrames(keyframes);
-      setContactPos(idxs.indexOf(contactIndex));
+      setContactPos(contactPos);
 
+      // Draw-ready pose + diagnostic overlays for the displayed keyframes.
+      setOverlays(
+        buildOverlays(densePoses, idxs, contactIndex, shotType, handedness, twoHandedBackhand, denseBalls),
+      );
+      setFrameSize({ w: width, h: height });
+
+      // The AI coaching step is best-effort: if it fails (e.g. Gemini quota/region),
+      // we still show the on-device frames, pose overlays, and metrics.
       setPhase('coaching');
-      const response = await analyze.mutateAsync({
-        shotType,
-        handedness,
-        twoHandedBackhand,
-        metrics: computed,
-        keyframes,
-        sessionId: sessionId || undefined,
-      });
-
-      setResult(response);
+      try {
+        const response = await analyze.mutateAsync({
+          shotType,
+          handedness,
+          twoHandedBackhand,
+          metrics: computed,
+          keyframes,
+          ballDetected,
+          contactKeyframe: contactPos,
+          sessionId: sessionId || undefined,
+        });
+        setResult(response);
+      } catch (coachErr) {
+        setResult(null);
+        setCoachError(
+          extractError(
+            coachErr,
+            'The AI coach is unavailable right now — your shot data is shown below.',
+          ),
+        );
+      }
       setPhase('done');
     } catch (err) {
       setError(extractError(err, err instanceof Error ? err.message : 'Something went wrong.'));
       setPhase('error');
+    } finally {
+      video.close();
     }
   }
 
@@ -162,8 +232,22 @@ export function CoachPage() {
         </div>
       )}
 
-      {phase === 'done' && result && (
-        <Feedback result={result} metrics={metrics} frames={sentFrames} contactPos={contactPos} />
+      {phase === 'done' && coachError && (
+        <div className="card border-warn">
+          <strong className="text-warn">AI coaching unavailable</strong>
+          <p className="mt-1">{coachError}</p>
+        </div>
+      )}
+
+      {phase === 'done' && (result || sentFrames.length > 0 || metrics.length > 0) && (
+        <Feedback
+          result={result}
+          metrics={metrics}
+          frames={sentFrames}
+          contactPos={contactPos}
+          overlays={overlays}
+          frameSize={frameSize ?? undefined}
+        />
       )}
 
       <History />

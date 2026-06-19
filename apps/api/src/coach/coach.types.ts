@@ -26,7 +26,12 @@ export interface AnalyzeRequest {
   handedness: Handedness;
   twoHandedBackhand?: boolean;
   metrics: Metric[];
+  /** Up to 6 base64 JPEG keyframes (no data: prefix), in chronological order. */
   keyframes: string[];
+  /** A ball was detected near the racket hand at the estimated contact frame. */
+  ballDetected?: boolean;
+  /** 0-based position of the estimated contact frame within `keyframes`. */
+  contactKeyframe?: number;
 }
 
 export interface AnalyzeResponse {
